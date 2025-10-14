@@ -34,8 +34,7 @@ This project is a step towards this objective, providing a service that accepts 
 ├─ backend/         → FastAPI service for database access and ML services
 │  └─ aglib/        → Lightweight Python package for building agents on top of LiteLLM
 ├─ database/        → Volumes and Docker container for PostgreSQL (local development)
-├─ mcp-server/      → Model Context Protocol server for Claude Desktop integration
-└─ research/       → Notebooks and modules for testing clustering and search during development
+└─ mcp-server/      → Model Context Protocol server for Claude Desktop integration
 ```
 
 ### Frontend
