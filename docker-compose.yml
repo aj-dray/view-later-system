@@ -15,23 +15,35 @@ services:
       timeout: 5s
       retries: 30
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./database/data:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
 
   backend:
     build:
       context: ./backend
     environment:
+      # database
       POSTGRES_HOST: postgres
       POSTGRES_DB: postgres
       POSTGRES_USER: local
       POSTGRES_PASSWORD: dev-password
+      # auth
       SERVER_SECRET: dev-secret
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:?Set MISTRAL_API_KEY in backend/.env or your shell}
-      COHERE_API_KEY: ${COHERE_API_KEY:?Set COHERE_API_KEY in backend/.env or your shell}
+      # urls
+      BACKEND_PUBLIC_URL: http://localhost:8000
+      FRONTEND_BASE_URL: http://localhost:3000
+      # gmail
+      GMAIL_OAUTH_REDIRECT_URI: http://localhost:8000/gmail/auth/callback
+      GOOGLE_OAUTH_CLIENT_ID: #your-client-id.apps.googleusercontent.com
+      GOOGLE_OAUTH_CLIENT_SECRET: #your-client-secret
+      # llm
+      MISTRAL_API_KEY: # insert!
+      COHERE_API_KEY: # insert!
+      OPENAI_API_KEY: # insert!
+
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "8000:8000"
 
@@ -62,6 +74,3 @@ services:
         condition: service_started
     ports:
       - "3000:3000"
-
-volumes:
-  pgdata: {}

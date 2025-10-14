@@ -14,7 +14,8 @@ type PanelGateProps = {
 export default function PanelGate({ children, session }: PanelGateProps) {
   const pathname = usePathname();
 
-  if (pathname === "/mobile") {
+  // Hide panel on mobile and settings pages
+  if (pathname === "/mobile" || pathname === "/settings") {
     return null;
   }
 

@@ -156,7 +156,8 @@ function createRandomPosition(): [number, number] {
     viewportWidth = window.innerWidth || 0;
   }
   const reserved = getReservedRightPx();
-  const fraction = viewportWidth > 0 ? clamp(reserved / viewportWidth, 0, 0.6) : 0;
+  const fraction =
+    viewportWidth > 0 ? clamp(reserved / viewportWidth, 0, 0.6) : 0;
   const bias = fraction * 0.8; // shift left proportionally
   x -= bias;
 

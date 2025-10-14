@@ -100,10 +100,14 @@ def get_items_table() -> str:
         canonical_url TEXT,
         title TEXT,
         source_site TEXT,
+        format TEXT,
+        author TEXT,
+        type TEXT,
         publication_date TIMESTAMPTZ,
         favicon_url TEXT,
         content_markdown TEXT,
         content_text TEXT,
+        duration TEXT,
         content_token_count INTEGER,
         client_status item_client_status,
         server_status item_server_status NOT NULL DEFAULT 'saved',
@@ -119,17 +123,67 @@ def get_items_table() -> str:
     )
     """
 
+
+def get_email_sources_table() -> str:
+    """Store newsletter imports sourced from Gmail."""
+    return """
+    CREATE TABLE IF NOT EXISTS email_sources (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL UNIQUE,
+        resolved_url TEXT,
+        slug TEXT NOT NULL UNIQUE,
+        title TEXT,
+        html_content TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """
+
+def get_gmail_credentials_table() -> str:
+    """Persist Gmail OAuth credentials per user."""
+    return """
+    CREATE TABLE IF NOT EXISTS gmail_credentials (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        credentials JSONB NOT NULL,
+        email_address TEXT,
+        token_expiry TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id)
+    )
+    """
+
+
+def get_gmail_senders_table() -> str:
+    """Track user-configured Gmail newsletter senders."""
+    return """
+    CREATE TABLE IF NOT EXISTS gmail_senders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        email_address TEXT NOT NULL,
+        label TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, email_address)
+    )
+    """
+
 ITEM_PUBLIC_COLS = [
         "id",
         "user_id",
         "url",
         "canonical_url",
         "title",
+        "format",
+        "type",
+        "author",
         "source_site",
         "publication_date",
         "favicon_url",
         "content_markdown",
         "content_text",
+        "duration",
         "content_token_count",
         "client_status",
         "server_status",
@@ -181,6 +235,20 @@ def get_usage_logs_table() -> str:
     )
     """
 
+def get_user_access_tokens_table() -> str:
+    """Store issued API access tokens for revocation and audit."""
+    return """
+    CREATE TABLE IF NOT EXISTS user_access_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_id UUID NOT NULL UNIQUE,
+        label TEXT,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        revoked_at TIMESTAMPTZ
+    )
+    """
+
 def get_user_settings_table() -> str:
     """User settings table schema for storing user preferences including UI controls."""
     return """
@@ -190,7 +258,6 @@ def get_user_settings_table() -> str:
         setting_type TEXT NOT NULL,
         setting_key TEXT NOT NULL,
         setting_value JSONB NOT NULL DEFAULT '{}',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (user_id, setting_type, setting_key)
     )
@@ -212,6 +279,10 @@ INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_user_canonical_url ON items(user_id, canonical_url) WHERE canonical_url IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_user_settings_lookup ON user_settings(user_id, setting_type, setting_key)",
     "CREATE INDEX IF NOT EXISTS idx_user_settings_type ON user_settings(user_id, setting_type)",
+    "CREATE INDEX IF NOT EXISTS idx_email_sources_item ON email_sources(item_id)",
+    "CREATE INDEX IF NOT EXISTS idx_user_access_tokens_user ON user_access_tokens(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_gmail_credentials_user ON gmail_credentials(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_gmail_senders_user ON gmail_senders(user_id)",
 ]
 
 
@@ -219,6 +290,10 @@ INDEXES = [
 
 
 COLUMN_ADDITIONS = [
+    "ALTER TABLE items ADD COLUMN IF NOT EXISTS format TEXT",
+    "ALTER TABLE items ADD COLUMN IF NOT EXISTS author TEXT",
+    "ALTER TABLE items ADD COLUMN IF NOT EXISTS type TEXT",
+    "ALTER TABLE items ADD COLUMN IF NOT EXISTS duration TEXT",
 ]
 
 
@@ -246,8 +321,12 @@ def get_create_sql() -> list[str]:
     # Tables
     statements.append(get_users_table())
     statements.append(get_items_table())
+    statements.append(get_email_sources_table())
+    statements.append(get_gmail_credentials_table())
+    statements.append(get_gmail_senders_table())
     statements.append(get_item_chunks_table())
     statements.append(get_usage_logs_table())
+    statements.append(get_user_access_tokens_table())
     statements.append(get_user_settings_table())
 
     # Column additions (for migrations)

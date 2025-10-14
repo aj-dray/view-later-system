@@ -15,11 +15,13 @@ import type { AddedItemDetail } from "@/app/_components/AddPanel";
 import type { ItemSummary } from "@/app/_lib/items";
 import {
   applyQueueFilter,
+  applyTypeFilter,
   deriveLoadingStage,
   sortQueueItems,
   type ItemLoadingStage,
   type QueueFilter,
   type QueueOrder,
+  type QueueTypeFilter,
 } from "@/app/_lib/queue";
 import { useSettings } from "@/app/_contexts/SettingsContext";
 
@@ -120,6 +122,9 @@ function createPlaceholderItem(detail: AddedItemDetail): ItemSummary {
     canonical_url: null,
     title: null,
     source_site: null,
+    format: null,
+    author: null,
+    type: null,
     publication_date: null,
     favicon_url: null,
     content_markdown: null,
@@ -143,6 +148,7 @@ export default function QueueClient({ initialItems }: QueueClientProps) {
   // Get current settings from global context
   const order = (getSetting("order") as QueueOrder) || "date";
   const filter = (getSetting("filter") as QueueFilter) || "queued";
+  const typeFilter = (getSetting("typeFilter") as QueueTypeFilter) || "all";
   const [items, setItems] = useState<DisplayItem[]>(() =>
     initialItems.map((item) => ({
       item,
@@ -183,9 +189,10 @@ export default function QueueClient({ initialItems }: QueueClientProps) {
 
       // Apply filter only to non-error, non-adding items
       const otherItems = otherEntries.map((entry) => entry.item);
-      const filteredOtherItems = applyQueueFilter(otherItems, filter);
+      const filteredByStatus = applyQueueFilter(otherItems, filter);
+      const filteredByType = applyTypeFilter(filteredByStatus, typeFilter);
       const filteredOtherEntries = otherEntries.filter((entry) =>
-        filteredOtherItems.some((item) => item.id === entry.item.id),
+        filteredByType.some((item) => item.id === entry.item.id),
       );
 
       const sorted = sortQueueItems(
@@ -212,7 +219,7 @@ export default function QueueClient({ initialItems }: QueueClientProps) {
 
       return [...errorItems, ...addingItems, ...sortedOtherEntries];
     },
-    [filter, order],
+    [filter, typeFilter, order],
   );
 
   useEffect(() => {

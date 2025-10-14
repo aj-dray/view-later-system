@@ -1,12 +1,5 @@
 {
     "mistral": {
-        "mistral-medium": {
-            "billing_type": "per_token",
-            "unit_tokens": 1000000,
-            "input_cost": "2",
-            "output_cost": "5",
-            "currency": "USD"
-        },
         "mistral-medium-latest": {
             "billing_type": "per_token",
             "unit_tokens": 1000000,
@@ -20,13 +13,6 @@
             "input_cost": "0.10",
             "output_cost": "0",
             "currency": "USD"
-        },
-        "mistral-embed-latest": {
-            "billing_type": "per_token",
-            "unit_tokens": 1000000,
-            "input_cost": "0.10",
-            "output_cost": "0",
-            "currency": "USD"
         }
     },
     "cohere": {
@@ -35,6 +21,36 @@
             "request_key": "requests",
             "cost_per_request": "0.002",
             "unit_label": "search",
+            "currency": "USD"
+        }
+    },
+    "openai": {
+        "gpt-5": {
+            "billing_type": "per_token",
+            "unit_tokens": 1000000,
+            "input_cost": "1.25",
+            "output_cost": "10",
+            "currency": "USD"
+        },
+        "gpt-5-mini": {
+            "billing_type": "per_token",
+            "unit_tokens": 1000000,
+            "input_cost": "0.25",
+            "output_cost": "2",
+            "currency": "USD"
+        },
+        "gpt-4o": {
+            "billing_type": "per_token",
+            "unit_tokens": 1000000,
+            "input_cost": "2.50",
+            "output_cost": "10.00",
+            "currency": "USD"
+        },
+        "gpt-4o-mini": {
+            "billing_type": "per_token",
+            "unit_tokens": 1000000,
+            "input_cost": "0.150",
+            "output_cost": "0.600",
             "currency": "USD"
         }
     }

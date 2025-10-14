@@ -5,21 +5,24 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ControlStrip } from "../default";
 import { DropdownComponent, type DropdownOption } from "../../_components/IO";
-import type { QueueFilter, QueueOrder } from "@/app/_lib/queue";
+import type { QueueFilter, QueueOrder, QueueTypeFilter } from "@/app/_lib/queue";
 import { useSettings, useSetting } from "@/app/_contexts/SettingsContext";
 
 interface QueueControlsClientProps {
   orderOptions: DropdownOption[];
   filterOptions: DropdownOption[];
+  typeFilterOptions: DropdownOption[];
   defaults: {
     order: QueueOrder;
     filter: QueueFilter;
+    typeFilter: QueueTypeFilter;
   };
 }
 
 export default function QueueControlsClient({
   orderOptions,
   filterOptions,
+  typeFilterOptions,
   defaults,
 }: QueueControlsClientProps) {
   const router = useRouter();
@@ -30,9 +33,10 @@ export default function QueueControlsClient({
   // Use global settings with URL sync
   const [order, setOrder] = useSetting("order");
   const [filter, setFilter] = useSetting("filter");
+  const [typeFilter, setTypeFilter] = useSetting("typeFilter");
 
   const updateParam = useCallback(
-    (key: "order" | "filter", value: string, defaultValue: string) => {
+    (key: "order" | "filter" | "typeFilter", value: string, defaultValue: string) => {
       const currentQuery = searchParams.toString();
       const next = new URLSearchParams(currentQuery);
       if (value === defaultValue) {
@@ -82,6 +86,20 @@ export default function QueueControlsClient({
     [filter, updateParam, setFilter, defaults.filter],
   );
 
+  const handleTypeFilterSelect = useCallback(
+    (option: DropdownOption) => {
+      const newTypeFilter = option.value as QueueTypeFilter;
+      if (newTypeFilter === typeFilter) {
+        return;
+      }
+
+      // Update global settings and URL
+      setTypeFilter(newTypeFilter);
+      updateParam("typeFilter", newTypeFilter, defaults.typeFilter);
+    },
+    [typeFilter, updateParam, setTypeFilter, defaults.typeFilter],
+  );
+
   return (
     <>
       <ControlStrip
@@ -102,6 +120,16 @@ export default function QueueControlsClient({
           selectedValue: filter,
           onSelect: handleFilterSelect,
           placeholder: "Select filter",
+        }}
+      />
+      <ControlStrip
+        label="Type"
+        io={DropdownComponent}
+        ioProps={{
+          options: typeFilterOptions,
+          selectedValue: typeFilter,
+          onSelect: handleTypeFilterSelect,
+          placeholder: "Select type",
         }}
       />
     </>

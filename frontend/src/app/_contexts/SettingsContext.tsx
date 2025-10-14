@@ -4,15 +4,16 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { usePathname } from "next/navigation";
 import { updateUserControl, type UserControlStates } from "@/app/_lib/user-controls";
 import { normalizePagePath } from "@/app/_lib/user-controls-utils";
+import type { QueueTypeFilter } from "@/app/_lib/queue";
 
 // Define the shape of all possible settings
 export interface PageSettings {
   // Queue page settings
   order?: "date" | "random" | "priority";
   filter?: "queued" | "all";
+  typeFilter?: QueueTypeFilter;
   // Search page settings
-  mode?: "lexical" | "semantic";
-  scope?: "items" | "chunks";
+  mode?: "lexical" | "semantic" | "agentic";
   // Graph page settings
   visualisation?: "pca" | "tsne" | "umap";
   clustering?: "kmeans" | "hca" | "dbscan";
@@ -25,10 +26,10 @@ export const PAGE_DEFAULTS: Record<string, PageSettings> = {
   "queue": {
     order: "date",
     filter: "queued",
+    typeFilter: "all",
   },
   "search": {
     mode: "lexical",
-    scope: "items",
   },
   "graph": {
     filter: "queued",

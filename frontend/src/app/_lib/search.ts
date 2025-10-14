@@ -2,10 +2,9 @@
 
 import { fetchItems, authedFetch } from "@/app/_lib/items";
 import type { ItemSummary } from "@/app/_lib/items";
+import { MAX_SEARCH_LIMIT } from "@/app/_lib/search-config";
 
-export type SearchMode = "lexical" | "semantic";
-export type SearchScope = "items" | "chunks";
-
+export type SearchMode = "lexical" | "semantic" | "agentic";
 export type SearchResult = {
   item: ItemSummary;
   preview: string | null;
@@ -13,10 +12,28 @@ export type SearchResult = {
   distance: number | null;
 };
 
+export type AgentTraceStepKind = "thought" | "action" | "observation" | "final";
+
+export type AgentTraceStep = {
+  kind: AgentTraceStepKind;
+  message: string;
+  data?: Record<string, unknown> | null;
+};
+
+export type AgentSearchMetadata = {
+  summary: string | null;
+  backend: "langchain";
+  steps: AgentTraceStep[];
+};
+
+export type SearchResponse = {
+  results: SearchResult[];
+  agent: AgentSearchMetadata | null;
+};
+
 type PerformSearchOptions = {
   query: string;
   mode?: SearchMode;
-  scope?: SearchScope;
   limit?: number;
 };
 
@@ -67,10 +84,15 @@ function parseRawResult(value: unknown): ParsedRawResult | null {
     return null;
   }
 
-  const preview =
-    toStringOrNull(value.preview) ??
-    toStringOrNull(value.content_text) ??
-    null;
+  // preview can be string or string[] (preferred). If array, use first element.
+  let preview: string | null = null;
+  const rawPreview = value.preview as unknown;
+  if (Array.isArray(rawPreview)) {
+    const first = rawPreview.find((entry) => typeof entry === "string" && entry.trim().length > 0);
+    preview = first ? String(first) : null;
+  } else {
+    preview = toStringOrNull(rawPreview) ?? toStringOrNull(value.content_text) ?? null;
+  }
   const score = toNumberOrNull(value.score);
   const distance = toNumberOrNull(value.distance);
 
@@ -79,31 +101,81 @@ function parseRawResult(value: unknown): ParsedRawResult | null {
 
 function sanitiseLimit(limit: number | undefined): number {
   if (!Number.isFinite(limit ?? NaN)) {
-    return 20;
+    return MAX_SEARCH_LIMIT;
   }
   const value = Math.trunc(limit as number);
   if (!Number.isFinite(value)) {
-    return 20;
+    return MAX_SEARCH_LIMIT;
   }
-  return Math.min(Math.max(value, 1), 100);
+  return Math.min(Math.max(value, 1), MAX_SEARCH_LIMIT);
+}
+
+function parseAgentStep(value: unknown): AgentTraceStep | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const kindValue = toStringOrNull(value.kind);
+  if (kindValue !== "thought" && kindValue !== "action" && kindValue !== "observation" && kindValue !== "final") {
+    return null;
+  }
+
+  const message = toStringOrNull(value.message);
+  if (!message) {
+    return null;
+  }
+
+  const dataValue = value.data;
+  const data = isRecord(dataValue) ? (dataValue as Record<string, unknown>) : null;
+
+  return {
+    kind: kindValue,
+    message,
+    data,
+  };
+}
+
+function parseAgentMetadata(value: unknown): AgentSearchMetadata | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const summary = toStringOrNull(value.summary);
+
+  const stepsRaw = Array.isArray(value.steps) ? value.steps : [];
+  const steps = stepsRaw
+    .map((entry) => parseAgentStep(entry))
+    .filter((entry): entry is AgentTraceStep => Boolean(entry));
+
+  if (summary === null && steps.length === 0) {
+    return null;
+  }
+
+  return {
+    summary,
+    backend: "langchain",
+    steps,
+  };
 }
 
 export async function searchItems({
   query,
   mode = "lexical",
-  scope = "items",
-  limit = 20,
-}: PerformSearchOptions): Promise<SearchResult[]> {
+  limit = MAX_SEARCH_LIMIT,
+}: PerformSearchOptions): Promise<SearchResponse> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
-    return [];
+    return { results: [], agent: null };
+  }
+
+  if (mode === "agentic") {
+    throw new Error("Agentic search must be streamed; use the agentic API route.");
   }
 
   const safeLimit = sanitiseLimit(limit);
   const params = new URLSearchParams();
   params.set("query", trimmedQuery);
   params.set("mode", mode === "semantic" ? "semantic" : "lexical");
-  params.set("scope", scope === "chunks" ? "chunks" : "items");
   params.set("limit", String(safeLimit));
 
   const response = await authedFetch(`/items/search?${params.toString()}`, {
@@ -138,6 +210,7 @@ export async function searchItems({
     throw new Error("Unexpected payload when performing search");
   }
 
+  const agentMetadata = parseAgentMetadata(payload.agent);
   const rawResults = Array.isArray(payload.results)
     ? payload.results
     : [];
@@ -147,7 +220,7 @@ export async function searchItems({
     .filter((entry): entry is ParsedRawResult => Boolean(entry));
 
   if (parsed.length === 0) {
-    return [];
+    return { results: [], agent: agentMetadata };
   }
 
   const uniqueIds: string[] = [];
@@ -160,7 +233,7 @@ export async function searchItems({
   });
 
   if (uniqueIds.length === 0) {
-    return [];
+    return { results: [], agent: agentMetadata };
   }
 
   const items = await fetchItems({
@@ -194,5 +267,5 @@ export async function searchItems({
     });
   });
 
-  return results;
+  return { results, agent: agentMetadata };
 }

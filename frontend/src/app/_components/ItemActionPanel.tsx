@@ -188,9 +188,15 @@ export default function ItemActionPanel({
   const queuePauseAction =
     currentStatus === "queued" ? STATUS_ACTIONS.paused : STATUS_ACTIONS.queued;
 
+  const collapsePanel = () => {
+    onExpandedChange?.(false);
+  };
+
+  const wrapperClassName = `relative ${isExpanded ? "z-40" : "z-0"}`;
+
   return (
     <div
-      className="relative"
+      className={wrapperClassName}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -203,14 +209,20 @@ export default function ItemActionPanel({
         e.stopPropagation();
         e.preventDefault();
       }}
+      onMouseLeave={collapsePanel}
+      onPointerLeave={collapsePanel}
     >
       {/* Current Status Button - always visible */}
       <div
         className={`
-          flex items-center justify-center h-[20px] rounded-[20px]
+          relative flex items-center justify-center h-[20px] rounded-[20px]
           transition-all duration-300 ease-out
           ${currentButton.bgColor}
-          ${isExpanded ? "opacity-0 pointer-events-none" : "opacity-100"}
+          ${
+            isExpanded
+              ? "opacity-0 pointer-events-none z-0"
+              : "opacity-100 z-10"
+          }
         `}
         onMouseEnter={() => {
           if (!isProcessing) {
@@ -228,7 +240,7 @@ export default function ItemActionPanel({
         title={`${currentButton.label} item`}
       >
         <div className="h-[15px] flex items-center justify-center gap-[5px] p-[10px]">
-          <div className="text-[10px] font-mono font-medium">
+          <div className="text-[10px] font-mono font-semibold">
             {currentButton.label}
           </div>
           <Icon

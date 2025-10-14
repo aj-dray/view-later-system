@@ -3,7 +3,7 @@
 from .extracting import extract_data
 from .generating import generate_data
 from .embedding import index_item, embed_query
-from . import clustering, searching
+from . import clustering, searching, newsletters
 
 __all__ = [
     "extract_data",
@@ -12,5 +12,5 @@ __all__ = [
     "embed_query",
     "clustering",
     "searching",
+    "newsletters",
 ]
-1

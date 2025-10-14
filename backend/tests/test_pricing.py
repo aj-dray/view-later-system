@@ -7,7 +7,7 @@ from app import pricing
 class PricingTests(unittest.TestCase):
     def test_prepare_usage_log_mistral_per_token(self):
         usage = {"prompt_tokens": 1000, "completion_tokens": 500}
-        result = pricing.prepare_usage_log("mistral", "mistral-medium", usage)
+        result = pricing.prepare_usage_log("mistral", "mistral-medium-latest", usage)
 
         self.assertEqual(result["prompt_tokens"], 1000)
         self.assertEqual(result["completion_tokens"], 500)

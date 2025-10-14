@@ -30,7 +30,7 @@ function formatSavedAt(savedAt?: ItemSummary["created_at"]) {
   const parsed = Date.parse(savedAt);
   return Number.isNaN(parsed)
     ? null
-    : new Date(parsed).toLocaleDateString("en-US", {
+    : new Date(parsed).toLocaleDateString("en-UK", {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -61,7 +61,7 @@ type InfoPanelProps = {
 function InfoPanel({ icon, label }: InfoPanelProps) {
   return (
     <div className="flex items-center gap-[5px] px-[10px] rounded-xl bg-transparent">
-      <span className="text-[10px] font-medium font-mono text-black">
+      <span className="text-[10px] font-semibold font-mono text-black">
         {label}
       </span>
       {icon && (
@@ -110,6 +110,12 @@ export default function ItemCard({
   useEffect(() => {
     setCurrentStatus(item.client_status);
   }, [item.client_status]);
+
+  useEffect(() => {
+    if (hasError && isStatusExpanded) {
+      setIsStatusExpanded(false);
+    }
+  }, [hasError, isStatusExpanded]);
 
   const handleStatusUpdate = (newStatus: ClientStatus) => {
     setCurrentStatus(newStatus);
@@ -230,7 +236,7 @@ export default function ItemCard({
           </div>
           {showSummary ? (
             showSummaryContent ? (
-              <p className="text-[9pt] text-black text-left line-clamp-3">
+              <p className="text-[9pt] text-black text-left line-clamp-3 font-sans">
                 {item.summary}
               </p>
             ) : null
@@ -245,36 +251,46 @@ export default function ItemCard({
 
         {/* Info Panels Section */}
         <div className="flex flex-col items-end justify-start gap-[6px] p-[15px] ml-auto">
+          {!hasError && (
+            <div
+              className={`relative transition-opacity duration-200 ${showActions ? "opacity-100" : "opacity-40 pointer-events-none"} ${isStatusExpanded ? "z-40" : "z-10"}`}
+            >
+              <ItemActionPanel
+                itemId={item.id}
+                currentStatus={currentStatus}
+                onStatusUpdate={handleStatusUpdate}
+                isExpanded={isStatusExpanded}
+                onExpandedChange={setIsStatusExpanded}
+                onDelete={onDelete}
+              />
+            </div>
+          )}
+
           <div
-            className={`transition-opacity ${showActions ? "opacity-100" : "opacity-40"}`}
+            className={`flex flex-col items-end gap-[6px] transition-opacity duration-200 ${
+              isStatusExpanded
+                ? "opacity-0 pointer-events-none"
+                : "opacity-100 pointer-events-auto"
+            }`}
           >
-            <ItemActionPanel
-              itemId={item.id}
-              currentStatus={currentStatus}
-              onStatusUpdate={handleStatusUpdate}
-              isExpanded={isStatusExpanded}
-              onExpandedChange={setIsStatusExpanded}
-              onDelete={onDelete}
-            />
+            {showReadingTime ? (
+              <InfoPanel icon={clockIcon} label={readingTime} />
+            ) : (
+              <div className="flex items-center gap-[5px] px-[10px] rounded-xl bg-transparent h-[20px]">
+                <SkeletonBlock className="h-[12px] w-[35px]" />
+                <SkeletonBlock className="h-[15px] w-[15px]" />
+              </div>
+            )}
+
+            {showSavedDate ? (
+              <InfoPanel icon={downloadIcon} label={savedDate ?? ""} />
+            ) : (
+              <div className="flex items-center gap-[5px] px-[10px] rounded-xl bg-transparent h-[20px]">
+                <SkeletonBlock className="h-[12px] w-[30px]" />
+                <SkeletonBlock className="h-[15px] w-[15px]" />
+              </div>
+            )}
           </div>
-
-          {showReadingTime ? (
-            <InfoPanel icon={clockIcon} label={readingTime} />
-          ) : (
-            <div className="flex items-center gap-[5px] px-[10px] rounded-xl bg-transparent h-[20px]">
-              <SkeletonBlock className="h-[12px] w-[35px]" />
-              <SkeletonBlock className="h-[15px] w-[15px]" />
-            </div>
-          )}
-
-          {showSavedDate ? (
-            <InfoPanel icon={downloadIcon} label={savedDate ?? ""} />
-          ) : (
-            <div className="flex items-center gap-[5px] px-[10px] rounded-xl bg-transparent h-[20px]">
-              <SkeletonBlock className="h-[12px] w-[30px]" />
-              <SkeletonBlock className="h-[15px] w-[15px]" />
-            </div>
-          )}
         </div>
       </div>
 

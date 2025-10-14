@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import TabPanel from "./TabPanel";
 import AddPanel from "./AddPanel";
-import UserPanel from "./UserPanel";
+import SettingsPill from "./SettingsPill";
 import LabelPanel from "./LabelPanel";
 import { useClusterContext } from "@/app/_contexts/ClusterContext";
 import {
@@ -185,7 +185,7 @@ export default function Panel({ children, session }: PanelProps) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: "easeOut", delay: 0.1 }}
       >
-        {/* User Panel */}
+        {/* Settings Pill */}
         <div className="w-fit min-w-[100px] flex flex-col">
           <AnimatePresence>
             {session && (
@@ -195,7 +195,7 @@ export default function Panel({ children, session }: PanelProps) {
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ duration: 0.2 }}
               >
-                <UserPanel username={session.username} />
+                <SettingsPill username={session.username} />
               </motion.div>
             )}
           </AnimatePresence>

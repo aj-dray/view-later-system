@@ -13,6 +13,7 @@ const QUEUE_LIKE_STATUSES = new Set(["queued", "adding"]);
 
 export type QueueOrder = "date" | "random" | "priority";
 export type QueueFilter = "queued" | "all";
+export type QueueTypeFilter = "all" | "article" | "video" | "paper" | "podcast" | "post" | "newsletter" | "other";
 
 function parseTimestamp(value?: string | null): number {
   if (!value) {
@@ -101,10 +102,21 @@ export function applyQueueFilter(
     return items.filter(
       (item) =>
         QUEUE_LIKE_STATUSES.has(item.client_status) ||
-        item.client_status === "error",
+        item.client_status === "error" ||
+        item.client_status === "bookmark",
     );
   }
   return [...items];
+}
+
+export function applyTypeFilter(
+  items: readonly ItemSummary[],
+  typeFilter: QueueTypeFilter,
+): ItemSummary[] {
+  if (typeFilter === "all") {
+    return [...items];
+  }
+  return items.filter((item) => item.type === typeFilter);
 }
 
 export function sortQueueItems(

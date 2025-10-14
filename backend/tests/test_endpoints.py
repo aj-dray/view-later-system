@@ -109,6 +109,32 @@ def test_items_crud_flow(client: TestClient, user_credentials, service_stubs):
         f"Item still exists after deletion: {final_items}"
 
 
+def test_add_item_rejects_empty_url(client: TestClient, user_credentials, service_stubs):
+    headers = user_credentials["auth_headers"]
+
+    response = client.post(
+        "/items/add",
+        json={"url": "   "},
+        headers=headers,
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json().get("detail") == "URL is required"
+
+
+def test_add_item_rejects_invalid_url(client: TestClient, user_credentials, service_stubs):
+    headers = user_credentials["auth_headers"]
+
+    response = client.post(
+        "/items/add",
+        json={"url": "notaurl"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json().get("detail") == "Please enter a valid URL with a proper domain"
+
+
 def test_unauthorized_access(client: TestClient):
     """Test that unauthorized access is properly rejected."""
     # Try to access protected endpoint without authentication

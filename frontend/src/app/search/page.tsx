@@ -6,25 +6,23 @@ import { getSession } from "@/app/_lib/auth";
 import {
   searchItems,
   type SearchMode,
-  type SearchScope,
 } from "@/app/_lib/search";
-import type { SearchResult } from "@/app/_lib/search";
+import { MAX_SEARCH_LIMIT } from "@/app/_lib/search-config";
+import type { SearchResponse } from "@/app/_lib/search";
 import SearchClient from "./SearchClient";
 
 type SearchPageProps = {
   searchParams: Promise<{
     q?: string;
     mode?: string;
-    scope?: string;
   }>;
 };
 
 function sanitiseMode(value: string | undefined): SearchMode {
-  return value === "semantic" ? "semantic" : "lexical";
-}
-
-function sanitiseScope(value: string | undefined): SearchScope {
-  return value === "chunks" ? "chunks" : "items";
+  if (value === "semantic" || value === "agentic") {
+    return value;
+  }
+  return "lexical";
 }
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
@@ -36,24 +34,10 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   const resolvedParams = await searchParams;
   const query = resolvedParams?.q?.trim() ?? "";
   const mode = sanitiseMode(resolvedParams?.mode);
-  const scope = sanitiseScope(resolvedParams?.scope);
 
-  let initialResults: SearchResult[] = [];
-  if (query) {
-    try {
-      initialResults = await searchItems({
-        query,
-        mode,
-        scope,
-        limit: 30,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("401")) {
-        redirect("/login");
-      }
-      throw error;
-    }
-  }
+  // Do not auto-run searches on refresh or mode changes.
+  // Always start with empty results; user must press Enter or the button.
+  const initialData: SearchResponse = { results: [], agent: null };
 
   return (
     <div
@@ -62,12 +46,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         paddingRight: "calc(var(--panels-width, 0px) + 25px",
       }}
     >
-      <SearchClient
-        initialQuery={query}
-        initialMode={mode}
-        initialScope={scope}
-        initialResults={initialResults}
-      />
+      <SearchClient initialQuery={query} initialMode={mode} initialData={initialData} />
     </div>
   );
 }

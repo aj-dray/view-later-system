@@ -29,6 +29,7 @@ _EMBED_BATCH_SIZE = 16
 
 
 def _clean_text(s: str) -> str:
+    """Clean for embedding"""
     s = html.unescape(s)                     # decode entities
     s = unicodedata.normalize("NFC", s)      # normalize unicode
     s = s.replace("\u00A0", " ")             # non-breaking spaces -> space
@@ -280,7 +281,7 @@ async def embed_query(text: str) -> list[float]:
 
     try:
         response = await asyncio.to_thread(embedding_client.request, input=[text])
-    except Exception as exc: 
+    except Exception as exc:
         raise RuntimeError(f"Embedding provider failed for query: {exc}") from exc
 
     if not response.embeddings:

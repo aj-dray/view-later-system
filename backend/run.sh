@@ -24,5 +24,5 @@ fi
 if [[ "$1" == "--prod" ]]; then
     python3 -m uvicorn app.main:app --host 0.0.0.0 --port $PORT 2>&1 | tee -a "$LOG_FILE"
 else
-    python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port $PORT 2>&1 | tee -a "$LOG_FILE"
+    python3 -m uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port $PORT 2>&1 | tee -a "$LOG_FILE"
 fi

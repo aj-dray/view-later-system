@@ -5,34 +5,29 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ControlStrip } from "../default";
 import { DropdownComponent, type DropdownOption } from "../../_components/IO";
-import type { SearchMode, SearchScope } from "@/app/_lib/search";
-import { useSettings, useSetting } from "@/app/_contexts/SettingsContext";
+import type { SearchMode } from "@/app/_lib/search";
+import { useSetting } from "@/app/_contexts/SettingsContext";
 
 interface SearchControlsClientProps {
   modeOptions: DropdownOption[];
-  scopeOptions: DropdownOption[];
   defaults: {
     mode: SearchMode;
-    scope: SearchScope;
   };
 }
 
 export default function SearchControlsClient({
   modeOptions,
-  scopeOptions,
   defaults,
 }: SearchControlsClientProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { loading } = useSettings();
 
   // Use global settings with URL sync
   const [mode, setMode] = useSetting("mode");
-  const [scope, setScope] = useSetting("scope");
 
   const updateParam = useCallback(
-    (key: "mode" | "scope", value: string, defaultValue: string) => {
+    (key: "mode", value: string, defaultValue: string) => {
       const currentQuery = searchParams.toString();
       const next = new URLSearchParams(currentQuery);
       if (value === defaultValue) {
@@ -68,20 +63,6 @@ export default function SearchControlsClient({
     [mode, updateParam, setMode, defaults.mode],
   );
 
-  const handleScopeSelect = useCallback(
-    (option: DropdownOption) => {
-      const newScope = option.value as SearchScope;
-      if (newScope === scope) {
-        return;
-      }
-
-      // Update global settings and URL
-      setScope(newScope);
-      updateParam("scope", newScope, defaults.scope);
-    },
-    [scope, updateParam, setScope, defaults.scope],
-  );
-
   return (
     <>
       <ControlStrip
@@ -92,16 +73,6 @@ export default function SearchControlsClient({
           selectedValue: mode,
           onSelect: handleModeSelect,
           placeholder: "Select type",
-        }}
-      />
-      <ControlStrip
-        label="Scope"
-        io={DropdownComponent}
-        ioProps={{
-          options: scopeOptions,
-          selectedValue: scope,
-          onSelect: handleScopeSelect,
-          placeholder: "Select scope",
         }}
       />
     </>

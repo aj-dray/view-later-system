@@ -2,32 +2,19 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-import hashlib
-import hmac
 import json
 import os
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from contextlib import contextmanager
-import logging
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Iterable,
-    Iterator,
-    Mapping,
-    Sequence,
-    Literal,
-)
+from decimal import Decimal
+from typing import (Any, Iterator, Sequence)
 import uuid
 from aglib import Response  # type: ignore[attr-defined]
 from psycopg import errors, sql, OperationalError, InterfaceError
 from contextlib import asynccontextmanager
-from psycopg import rows
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row
 from datetime import datetime
+
+
 
 
 from . import schemas
@@ -36,19 +23,14 @@ from . import auth
 from . import pricing
 
 
-logger = logging.getLogger(__name__)
-
-
 # === VARIABLES ===
 
 
+# Embedding
 EMBEDDING_DIM = 1024
-PBKDF2_ITERATIONS = 310_000
-# Batch the chunk inserts to reduce payload sizes over SSL connections.
-# Tune these as needed.
-INSERT_BATCH_SIZE = 16
-INSERT_MAX_RETRIES = 3
-
+# Chunking
+CHUNK_INSERT_BATCH_SIZE = 16
+CHUNK_INSERT_MAX_RETRIES = 1
 
 ITEM_SEARCH_DEFAULT_COLUMNS: tuple[str, ...] = ("id", "title", "summary")
 
@@ -78,7 +60,6 @@ CHUNK_SEARCH_DEFAULT_COLUMNS: tuple[str, ...] = (
 # === CONFIGURATION ===
 
 
-# Build DATABASE_URL from environment variables
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "local")
@@ -86,7 +67,7 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dev-password")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
+    "DATABASE_URL", # if this set, use directly
     f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
 pool: AsyncConnectionPool | None = None
@@ -105,11 +86,13 @@ async def init_pool():
         )
         await pool.open()
 
+
 async def close_pool():
     global pool
     if pool:
         await pool.close()
         pool = None
+
 
 @asynccontextmanager
 async def get_connection():
@@ -123,7 +106,6 @@ async def get_connection():
 
 async def init_database() -> None:
     """Create required extensions, types, tables and indexes if they do not exist."""
-
     sql_statments: list[str] = schemas.get_create_sql()
 
     async with get_connection() as conn:
@@ -138,7 +120,6 @@ async def init_database() -> None:
 
 async def create_user(username: str, password: str) -> int:
     """Create a user row, returning the generated id."""
-
     password_hash = auth.hash_password(password)
 
     async with get_connection() as conn:
@@ -152,16 +133,17 @@ async def create_user(username: str, password: str) -> int:
                     """,
                     {"username": username, "password_hash": password_hash},
                 )
-            except errors.UniqueViolation as exc:
+                row = await cur.fetchone()
+                if not row:
+                    raise RuntimeError("No row inserted.")
+            except Exception as e:
                 await conn.rollback()
-                raise ValueError("Username already exists") from exc
-
-            row = await cur.fetchone()
-            if not row:
-                await conn.rollback()
-                raise RuntimeError("Failed to insert user")
-
-        await conn.commit()
+                if isinstance(e, errors.UniqueViolation):
+                    raise ValueError("Username already exists") from e
+                else:
+                    raise RuntimeError(f"Failed to create user: {e}")
+            else:
+                await conn.commit()
 
     return row["id"]
 
@@ -216,7 +198,91 @@ async def update_user_password(*, user_id: str, new_password: str) -> None:
                 """,
                 {"password_hash": password_hash, "user_id": user_id},
             )
+
+
+async def create_user_access_token(
+    *,
+    user_id: str,
+    token_id: str,
+    expires_at: datetime | None,
+    label: str | None = None,
+) -> dict[str, Any]:
+    """Persist metadata for an issued API access token and return the stored row."""
+    token_uuid = uuid.UUID(token_id)
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                INSERT INTO user_access_tokens (user_id, token_id, label, expires_at)
+                VALUES (%(user_id)s, %(token_id)s, %(label)s, %(expires_at)s)
+                RETURNING token_id, label, expires_at, created_at
+                """,
+                {
+                    "user_id": user_id,
+                    "token_id": token_uuid,
+                    "label": label,
+                    "expires_at": expires_at,
+                },
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise RuntimeError("Failed to insert access token")
         await conn.commit()
+    return _normalise_row(row)
+
+
+async def list_user_access_tokens(user_id: str) -> list[dict[str, Any]]:
+    """Return all API tokens for a user ordered by creation time."""
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT token_id, label, expires_at, created_at, revoked_at
+                FROM user_access_tokens
+                WHERE user_id = %(user_id)s
+                ORDER BY created_at DESC
+                """,
+                {"user_id": user_id},
+            )
+            rows = await cur.fetchall()
+    return [_normalise_row(row) for row in rows]
+
+
+async def revoke_user_access_token(*, user_id: str, token_id: str) -> bool:
+    """Revoke a previously issued API token."""
+    token_uuid = uuid.UUID(token_id)
+    async with get_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE user_access_tokens
+                SET revoked_at = NOW()
+                WHERE user_id = %(user_id)s
+                  AND token_id = %(token_id)s
+                  AND revoked_at IS NULL
+                """,
+                {"user_id": user_id, "token_id": token_uuid},
+            )
+            updated = cur.rowcount
+        await conn.commit()
+    return bool(updated)
+
+
+async def get_user_access_token(token_id: str) -> dict[str, Any] | None:
+    """Fetch token metadata regardless of revocation state."""
+    token_uuid = uuid.UUID(token_id)
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT user_id, token_id, label, expires_at, created_at, revoked_at
+                FROM user_access_tokens
+                WHERE token_id = %(token_id)s
+                """,
+                {"token_id": token_uuid},
+            )
+            row = await cur.fetchone()
+    return _normalise_row(row) if row else None
 
 
 async def clone_user_data(*, source_user_id: str, target_user_id: str) -> dict[str, int]:
@@ -232,7 +298,7 @@ async def clone_user_data(*, source_user_id: str, target_user_id: str) -> dict[s
     """
     async with get_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            # Copy items: insert rows for target user with same content/metadata
+            # Copy items
             await cur.execute(
                 """
                 INSERT INTO items (
@@ -241,10 +307,14 @@ async def clone_user_data(*, source_user_id: str, target_user_id: str) -> dict[s
                     canonical_url,
                     title,
                     source_site,
+                    format,
+                    author,
+                    type,
                     publication_date,
                     favicon_url,
                     content_markdown,
                     content_text,
+                    duration,
                     content_token_count,
                     client_status,
                     server_status,
@@ -256,15 +326,19 @@ async def clone_user_data(*, source_user_id: str, target_user_id: str) -> dict[s
                     created_at
                 )
                 SELECT
-                    %(target_user_id)s AS user_id,
+                    %(target_user_id)s,
                     url,
                     canonical_url,
                     title,
                     source_site,
+                    format,
+                    author,
+                    type,
                     publication_date,
                     favicon_url,
                     content_markdown,
                     content_text,
+                    duration,
                     content_token_count,
                     client_status,
                     server_status,
@@ -276,51 +350,25 @@ async def clone_user_data(*, source_user_id: str, target_user_id: str) -> dict[s
                     created_at
                 FROM items
                 WHERE user_id = %(source_user_id)s
-                RETURNING id
                 """,
                 {"source_user_id": source_user_id, "target_user_id": target_user_id},
             )
-            inserted_items = await cur.fetchall()
-            inserted_count = len(inserted_items or [])
+            inserted_count = cur.rowcount
 
-            # Copy item_chunks by matching items via URL between source and target users
-            # This avoids needing an explicit mapping table of old->new item ids.
+            # Copy chunks
             await cur.execute(
                 """
-                INSERT INTO item_chunks (
-                    item_id,
-                    position,
-                    content_text,
-                    content_token_count,
-                    mistral_embedding,
-                    created_at
-                )
-                SELECT
-                    dest.id AS item_id,
-                    c.position,
-                    c.content_text,
-                    c.content_token_count,
-                    c.mistral_embedding,
-                    c.created_at
+                INSERT INTO item_chunks (item_id, position, content_text, content_token_count, mistral_embedding, created_at)
+                SELECT dest.id, c.position, c.content_text, c.content_token_count, c.mistral_embedding, c.created_at
                 FROM item_chunks AS c
                 JOIN items AS src ON src.id = c.item_id AND src.user_id = %(source_user_id)s
                 JOIN items AS dest ON dest.user_id = %(target_user_id)s AND dest.url = src.url
                 """,
                 {"source_user_id": source_user_id, "target_user_id": target_user_id},
             )
-            # item_chunks insert count not directly returned; we can query for count
-            await cur.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM item_chunks AS c
-                JOIN items AS src ON src.id = c.item_id AND src.user_id = %(source_user_id)s
-                """,
-                {"source_user_id": source_user_id},
-            )
-            row = await cur.fetchone()
-            chunk_count = int(row["cnt"]) if row and "cnt" in row else 0
+            chunk_count = cur.rowcount
 
-            # Copy user settings (all types/keys)
+            # Copy user settings
             await cur.execute(
                 """
                 INSERT INTO user_settings (
@@ -328,25 +376,23 @@ async def clone_user_data(*, source_user_id: str, target_user_id: str) -> dict[s
                     setting_type,
                     setting_key,
                     setting_value,
-                    created_at,
-                    updated_at
+                    updated_at,
+                    created_at
                 )
                 SELECT
-                    %(target_user_id)s AS user_id,
+                    %(target_user_id)s,
                     setting_type,
                     setting_key,
                     setting_value,
-                    created_at,
-                    updated_at
+                    updated_at,
+                    created_at
                 FROM user_settings
                 WHERE user_id = %(source_user_id)s
                 ON CONFLICT (user_id, setting_type, setting_key) DO NOTHING
-                RETURNING id
                 """,
                 {"source_user_id": source_user_id, "target_user_id": target_user_id},
             )
-            inserted_settings = await cur.fetchall()
-            settings_count = len(inserted_settings or [])
+            settings_count = cur.rowcount
         await conn.commit()
 
     return {"items": inserted_count, "item_chunks": chunk_count, "user_settings": settings_count}
@@ -384,6 +430,21 @@ async def create_item(payload: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError("Failed to insert item")
         await conn.commit()
     return _normalise_row(row)
+
+
+async def get_item_by_url(*, user_id: str, url: str) -> dict[str, Any] | None:
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT id, user_id, url, created_at
+                FROM items
+                WHERE user_id = %(user_id)s AND url = %(url)s
+                """,
+                {"user_id": user_id, "url": url},
+            )
+            row = await cur.fetchone()
+    return _normalise_row(row) if row else None
 
 
 async def get_item(item_id: str, cols: list[str], user_id: str) -> dict[str, Any] | None:
@@ -503,40 +564,6 @@ async def get_items(
     return [_normalise_row(row) for row in rows]
 
 
-def _ensure_columns(
-    requested: Sequence[str] | None,
-    allowed: Sequence[str],
-    default: Sequence[str],
-) -> list[str]:
-    """Return a validated list of columns limited to an allow-list."""
-
-    if requested:
-        safe = [col for col in requested if col in allowed]
-    else:
-        safe = list(default)
-    if not safe:
-        raise ValueError("No valid columns specified")
-    return safe
-
-
-def _vector_to_pg(vec: Sequence[float]) -> str:
-    """Deprecated: use app.utils.vector_to_pg. Kept for backward compatibility."""
-    return app_utils.vector_to_pg(vec)
-
-
-def _coerce_numeric(value: Any) -> Any:
-    """Normalise numeric values coming back from psycopg row factories."""
-
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return value
-    return value
-
-
 async def update_item(updates: dict[str, Any], item_id: str, user_id: str) -> dict[str, Any] | None:
     allowed_columns = schemas.ITEM_PUBLIC_COLS
     cols = [c for c in updates if c in allowed_columns]
@@ -621,7 +648,7 @@ async def lexical_search_items(*, user_id: str, query_text: str, columns: Sequen
     """
     async with get_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
+            await cur.execute(query, params)  # type: ignore[arg-type]
             rows = await cur.fetchall()
     return [_normalise_row(row) for row in rows]
 
@@ -647,7 +674,7 @@ async def semantic_search_items(*, user_id: str, query_vector: Sequence[float], 
     """
     async with get_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
+            await cur.execute(query, params)  # type: ignore[arg-type]
             rows = await cur.fetchall()
     return [_normalise_row(row) for row in rows]
 
@@ -677,7 +704,7 @@ async def lexical_search_chunks(*, user_id: str, query_text: str, columns: Seque
     """
     async with get_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
+            await cur.execute(query, params)  # type: ignore[arg-type]
             rows = await cur.fetchall()
     return [_normalise_row(row) for row in rows]
 
@@ -706,7 +733,7 @@ async def semantic_search_chunks(*, user_id: str, query_vector: Sequence[float],
     """
     async with get_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(query, params)
+            await cur.execute(query, params)  # type: ignore[arg-type]
             rows = await cur.fetchall()
     return [_normalise_row(row) for row in rows]
 
@@ -733,7 +760,7 @@ async def add_item_chunks(*, item_id: str, chunks: Sequence[dict[str, Any]]) -> 
             }
         )
 
-    # Insert in batches with retries to avoid large payloads and handle transient EOF/SSL errors
+    # Insert in batches
     stmt = (
         """
         INSERT INTO item_chunks (item_id, position, content_text, content_token_count, mistral_embedding)
@@ -745,65 +772,28 @@ async def add_item_chunks(*, item_id: str, chunks: Sequence[dict[str, Any]]) -> 
         """
     )
 
-    # Small helper to yield batches
-    def _batches(seq: Sequence[dict[str, Any]], size: int) -> Iterator[Sequence[dict[str, Any]]]:
-        for i in range(0, len(seq), size):
-            yield seq[i : i + size]
+    async def _insert_batch(batch: Sequence[dict[str, Any]]) -> None:
+        async with get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(stmt, batch)
+            await conn.commit()
 
-    for batch in _batches(records, max(1, INSERT_BATCH_SIZE)):
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                async with get_connection() as conn:
-                    async with conn.cursor() as cur:
-                        await cur.executemany(stmt, batch)
-                    await conn.commit()
-                break  # success for this batch
-            except (OperationalError, InterfaceError) as exc:
-                # Transient connection errors sometimes show up as SSL EOF / bad length
-                is_transient = True
-                msg = str(exc).lower()
-                # A conservative check; still bounded by max retries
-                transient_indicators = [
-                    "ssl", "eof", "bad length", "server closed the connection",
-                    "connection not open", "connection closed"
-                ]
-                if not any(tok in msg for tok in transient_indicators):
-                    is_transient = False
+    # Process records in batches
+    batch_size = max(1, CHUNK_INSERT_BATCH_SIZE)
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
 
-                logger.warning(
-                    "Batch insert failed%s (attempt %s/%s); size=%s",
-                    " (transient)" if is_transient else "",
-                    attempt,
-                    INSERT_MAX_RETRIES,
-                    len(batch),
-                    extra={"item_id": item_id, "error": str(exc)},
-                    exc_info=None,
-                )
-                if not is_transient or attempt >= INSERT_MAX_RETRIES:
-                    logger.exception(
-                        "Failed to persist chunk embeddings",
-                        extra={
-                            "item_id": item_id,
-                            "chunk_count": len(records),
-                            "batch_size": len(batch),
-                            "attempt": attempt,
-                        },
-                    )
-                    raise
-                # brief async backoff before retrying this batch
-                try:
-                    import asyncio
-                    await asyncio.sleep(0.1 * attempt)
-                except Exception:
-                    pass
-            except Exception:
-                logger.exception(
-                    "Failed to persist chunk embeddings",
-                    extra={"item_id": item_id, "chunk_count": len(records)},
-                )
-                raise
+        try:
+            await _insert_batch(batch)
+        except Exception as exc:
+            # Print error but don't raise - retry with half batch size
+            print(f"Batch insert failed, retrying with smaller batch: {exc}")
+
+            # Retry with half batch size
+            half_size = max(1, len(batch) // 2)
+            for j in range(0, len(batch), half_size):
+                small_batch = batch[j : j + half_size]
+                await _insert_batch(small_batch)
 
 
 # === USAGE LOGS ===
@@ -856,6 +846,241 @@ async def create_usage_log(
     return _normalise_row(row)
 
 
+# === EMAIL SOURCES ===
+
+
+async def create_email_source(
+    *,
+    item_id: str,
+    message_id: str,
+    slug: str,
+    title: str | None = None,
+    resolved_url: str | None = None,
+    html_content: str | None = None,
+) -> dict[str, Any]:
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                INSERT INTO email_sources (item_id, message_id, resolved_url, slug, title, html_content)
+                VALUES (%(item_id)s, %(message_id)s, %(resolved_url)s, %(slug)s, %(title)s, %(html_content)s)
+                RETURNING id, item_id, message_id, resolved_url, slug, title, html_content, created_at, updated_at
+                """,
+                {
+                    "item_id": item_id,
+                    "message_id": message_id,
+                    "resolved_url": resolved_url,
+                    "slug": slug,
+                    "title": title,
+                    "html_content": html_content,
+                },
+            )
+            row = await cur.fetchone()
+        await conn.commit()
+    if not row:
+        raise RuntimeError("Failed to insert email source")
+    return _normalise_row(row)
+
+
+async def get_email_source_by_message_id(message_id: str) -> dict[str, Any] | None:
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT es.id, es.item_id, es.message_id, es.resolved_url, es.slug, es.title,
+                       es.html_content, es.created_at, es.updated_at, i.user_id
+                FROM email_sources es
+                JOIN items i ON es.item_id = i.id
+                WHERE es.message_id = %(message_id)s
+                """,
+                {"message_id": message_id},
+            )
+            row = await cur.fetchone()
+    return _normalise_row(row) if row else None
+
+
+async def get_email_source_by_slug(slug: str) -> dict[str, Any] | None:
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT es.id, es.item_id, es.message_id, es.resolved_url, es.slug, es.title,
+                       es.html_content, es.created_at, es.updated_at, i.user_id
+                FROM email_sources es
+                JOIN items i ON es.item_id = i.id
+                WHERE es.slug = %(slug)s
+                """,
+                {"slug": slug},
+            )
+            row = await cur.fetchone()
+    return _normalise_row(row) if row else None
+
+
+async def email_slug_exists(slug: str) -> bool:
+    async with get_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM email_sources WHERE slug = %s",
+                (slug,),
+            )
+            row = await cur.fetchone()
+    return bool(row)
+
+
+async def update_email_source_html(*, email_source_id: str, html_content: str | None) -> dict[str, Any] | None:
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                UPDATE email_sources
+                SET html_content = %(html_content)s,
+                    updated_at = NOW()
+                WHERE id = %(email_source_id)s
+                RETURNING id, item_id, message_id, resolved_url, slug, title, html_content, created_at, updated_at
+                """,
+                {"email_source_id": email_source_id, "html_content": html_content},
+            )
+            row = await cur.fetchone()
+        await conn.commit()
+    return _normalise_row(row) if row else None
+
+
+# === GMAIL CONFIGURATION ===
+
+
+async def upsert_gmail_credentials(
+    *,
+    user_id: str,
+    credentials: dict[str, Any],
+    email_address: str | None = None,
+    token_expiry: datetime | None = None,
+) -> dict[str, Any]:
+    """Insert or update Gmail OAuth credentials for a user."""
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                INSERT INTO gmail_credentials (user_id, credentials, email_address, token_expiry, created_at, updated_at)
+                VALUES (%(user_id)s, %(credentials)s::jsonb, %(email_address)s, %(token_expiry)s, NOW(), NOW())
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    credentials = EXCLUDED.credentials,
+                    email_address = EXCLUDED.email_address,
+                    token_expiry = EXCLUDED.token_expiry,
+                    updated_at = NOW()
+                RETURNING id, user_id, credentials, email_address, token_expiry, created_at, updated_at
+                """,
+                {
+                    "user_id": user_id,
+                    "credentials": json.dumps(credentials),
+                    "email_address": email_address,
+                    "token_expiry": token_expiry,
+                },
+            )
+            row = await cur.fetchone()
+        await conn.commit()
+    if not row:
+        raise RuntimeError("Failed to store Gmail credentials")
+    return _normalise_row(row)
+
+
+async def get_gmail_credentials(user_id: str) -> dict[str, Any] | None:
+    """Retrieve stored Gmail credentials for a user, if present."""
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT id, user_id, credentials, email_address, token_expiry, created_at, updated_at
+                FROM gmail_credentials
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            row = await cur.fetchone()
+    return _normalise_row(row) if row else None
+
+
+async def delete_gmail_credentials(user_id: str) -> bool:
+    """Delete stored Gmail credentials for a user."""
+    async with get_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM gmail_credentials WHERE user_id = %s",
+                (user_id,),
+            )
+            deleted = cur.rowcount > 0
+        await conn.commit()
+    return deleted
+
+
+async def list_gmail_senders(user_id: str) -> list[dict[str, Any]]:
+    """List configured Gmail newsletter senders for a user."""
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT id, user_id, email_address, label, created_at
+                FROM gmail_senders
+                WHERE user_id = %s
+                ORDER BY created_at ASC
+                """,
+                (user_id,),
+            )
+            rows = await cur.fetchall()
+    return [_normalise_row(row) for row in rows]
+
+
+async def add_gmail_sender(
+    *,
+    user_id: str,
+    email_address: str,
+    label: str | None = None,
+) -> dict[str, Any]:
+    """Add a sender to the Gmail newsletter configuration."""
+    if not email_address or not email_address.strip():
+        raise ValueError("Email address is required")
+
+    normalised = email_address.strip().lower()
+    async with get_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                INSERT INTO gmail_senders (user_id, email_address, label)
+                VALUES (%(user_id)s, %(email_address)s, %(label)s)
+                ON CONFLICT (user_id, email_address)
+                DO UPDATE SET
+                    label = COALESCE(EXCLUDED.label, gmail_senders.label),
+                    created_at = gmail_senders.created_at
+                RETURNING id, user_id, email_address, label, created_at
+                """,
+                {
+                    "user_id": user_id,
+                    "email_address": normalised,
+                    "label": label,
+                },
+            )
+            row = await cur.fetchone()
+        await conn.commit()
+    if not row:
+        raise RuntimeError("Failed to add Gmail sender")
+    return _normalise_row(row)
+
+
+async def remove_gmail_sender(*, user_id: str, sender_id: str) -> bool:
+    """Remove a sender from the Gmail newsletter configuration."""
+    async with get_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                DELETE FROM gmail_senders
+                WHERE user_id = %s AND id = %s
+                """,
+                (user_id, sender_id),
+            )
+            deleted = cur.rowcount > 0
+        await conn.commit()
+    return deleted
+
 
 # === UTILITIES ===
 
@@ -881,21 +1106,21 @@ def _normalise_row(row: dict[str, Any]) -> dict[str, Any]:
 async def get_user_setting(user_id: str, setting_type: str, setting_key: str) -> dict[str, Any] | None:
     """Get a specific user setting."""
     async with get_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT setting_value FROM user_settings WHERE user_id = %s AND setting_type = %s AND setting_key = %s",
                 (user_id, setting_type, setting_key)
             )
             row = await cur.fetchone()
             if row:
-                return row["setting_value"]
+                return row["setting_value"]  # type: ignore[return-value]
             return None
 
 
 async def set_user_setting(user_id: str, setting_type: str, setting_key: str, setting_value: dict[str, Any]) -> None:
     """Set a user setting."""
     async with get_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
                 INSERT INTO user_settings (user_id, setting_type, setting_key, setting_value, updated_at)
@@ -913,7 +1138,7 @@ async def set_user_setting(user_id: str, setting_type: str, setting_key: str, se
 async def update_user_setting_field(user_id: str, setting_type: str, setting_key: str, field_key: str, field_value: Any) -> None:
     """Update a single field within a user setting."""
     async with get_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # First try to update existing record
             await cur.execute(
                 """
@@ -941,29 +1166,40 @@ async def update_user_setting_field(user_id: str, setting_type: str, setting_key
 async def get_user_settings_by_type(user_id: str, setting_type: str) -> dict[str, dict[str, Any]]:
     """Get all user settings of a specific type."""
     async with get_connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT setting_key, setting_value FROM user_settings WHERE user_id = %s AND setting_type = %s",
                 (user_id, setting_type)
             )
             rows = await cur.fetchall()
-            return {row["setting_key"]: row["setting_value"] for row in rows}
+            return {row["setting_key"]: row["setting_value"] for row in rows}  # type: ignore[misc]
 
 
-# Legacy functions for backward compatibility
-async def get_user_controls(user_id: str, page_path: str) -> dict[str, Any] | None:
-    """Legacy function: Get control states for a user on a specific page."""
-    return await get_user_setting(user_id, "controls", page_path)
+# ===== UTILITIES =====
 
 
-async def set_user_controls(user_id: str, page_path: str, control_states: dict[str, Any]) -> None:
-    """Legacy function: Set control states for a user on a specific page."""
-    await set_user_setting(user_id, "controls", page_path, control_states)
+def _ensure_columns(
+    requested: Sequence[str] | None,
+    allowed: Sequence[str],
+    default: Sequence[str],
+) -> list[str]:
+    """Return a validated list of columns limited to an allow-list."""
+
+    if requested:
+        safe = [col for col in requested if col in allowed]
+    else:
+        safe = list(default)
+    if not safe:
+        raise ValueError("No valid columns specified")
+    return safe
 
 
-async def update_user_control(user_id: str, page_path: str, control_key: str, control_value: Any) -> None:
-    """Legacy function: Update a single control state for a user on a specific page."""
-    await update_user_setting_field(user_id, "controls", page_path, control_key, control_value)
+def _vector_to_pg(vec: Sequence[float]) -> str:
+    """Deprecated: use app.utils.vector_to_pg. Kept for backward compatibility."""
+    return app_utils.vector_to_pg(vec)
+
+
+# ===== EXPORTS =====
 
 
 __all__ = [
@@ -972,7 +1208,12 @@ __all__ = [
     "init_database",
     "create_user",
     "authenticate_user",
+    "create_user_access_token",
+    "list_user_access_tokens",
+    "revoke_user_access_token",
+    "get_user_access_token",
     "create_item",
+    "get_item_by_url",
     "get_item",
     "get_items",
     "lexical_search_items",
@@ -983,11 +1224,19 @@ __all__ = [
     "delete_item",
     "add_item_chunks",
     "create_usage_log",
+    "create_email_source",
+    "get_email_source_by_message_id",
+    "get_email_source_by_slug",
+    "email_slug_exists",
+    "update_email_source_html",
+    "upsert_gmail_credentials",
+    "get_gmail_credentials",
+    "delete_gmail_credentials",
+    "list_gmail_senders",
+    "add_gmail_sender",
+    "remove_gmail_sender",
     "get_user_setting",
     "set_user_setting",
     "update_user_setting_field",
     "get_user_settings_by_type",
-    "get_user_controls",
-    "set_user_controls",
-    "update_user_control",
 ]

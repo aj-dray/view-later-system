@@ -31,6 +31,9 @@ export const ITEM_COLUMNS = [
   "canonical_url",
   "title",
   "source_site",
+  "format",
+  "author",
+  "type",
   "publication_date",
   "favicon_url",
   "content_markdown",
@@ -56,6 +59,9 @@ export type ItemSummary = {
   canonical_url: string | null;
   title: string | null;
   source_site: string | null;
+  format: string | null;
+  author: string | null;
+  type: string | null;
   publication_date: string | null;
   favicon_url: string | null;
   content_markdown: string | null;

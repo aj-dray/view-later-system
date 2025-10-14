@@ -113,7 +113,7 @@ async def database():
     async with db.get_connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "TRUNCATE item_chunks, items, llm_usage_logs, users CASCADE"
+                "TRUNCATE email_sources, item_chunks, items, llm_usage_logs, users CASCADE"
             )
         await conn.commit()
     

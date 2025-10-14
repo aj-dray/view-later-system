@@ -5,20 +5,17 @@ import { getCurrentUser } from "@/app/_lib/user";
 import { preloadAllAppSettings } from "@/app/_lib/user-controls-server";
 import { SettingsProvider } from "@/app/_contexts/SettingsContext";
 import { ClusterProvider } from "@/app/_contexts/ClusterContext";
-import { IBM_Plex_Mono, Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
-import { headers } from "next/headers";
+import { SpeedInsights } from "@vercel/speed-insights/next";
+import { inter, ibmPlexMono } from "@/app/_ui/fonts";
 
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-ibm-plex-mono",
-});
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-});
+export const metadata = {
+  title: "Later",
+  description: "Repository of content to consume",
+  icons: {
+    icon: "/favicon.png",
+  },
+};
 
 export default async function RootLayout({
   children,
@@ -29,8 +26,8 @@ export default async function RootLayout({
   const initialSettings = user ? await preloadAllAppSettings() : {};
 
   return (
-    <html lang="en" className={`${ibmPlexMono.variable} ${inter.variable}`}>
-      <body>
+    <html lang="en" className={`${inter.variable} ${ibmPlexMono.variable}`}>
+      <body className={inter.className}>
         <SettingsProvider initialSettings={initialSettings}>
           <ClusterProvider>
             <div className="relative h-screen w-screen">
@@ -49,6 +46,7 @@ export default async function RootLayout({
           </ClusterProvider>
         </SettingsProvider>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
