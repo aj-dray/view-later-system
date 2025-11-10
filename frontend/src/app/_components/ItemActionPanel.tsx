@@ -195,28 +195,46 @@ export default function ItemActionPanel({
   const wrapperClassName = `relative ${isExpanded ? "z-40" : "z-0"}`;
 
   return (
-    <div
-      className={wrapperClassName}
-      onClick={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-      }}
-      onMouseDown={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-      }}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-      }}
-      onMouseLeave={collapsePanel}
-      onPointerLeave={collapsePanel}
-    >
+    <>
+      {/* Invisible backdrop for touchscreen devices - closes panel when tapped outside */}
+      {isExpanded && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            collapsePanel();
+          }}
+          onTouchEnd={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            collapsePanel();
+          }}
+        />
+      )}
+
+      <div
+        className={wrapperClassName}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+        onMouseLeave={collapsePanel}
+        onPointerLeave={collapsePanel}
+      >
       {/* Current Status Button - always visible */}
       <div
         className={`
           relative flex items-center justify-center h-[20px] rounded-[20px]
-          transition-all duration-300 ease-out
+          transition-all duration-300 ease-out cursor-pointer
           ${currentButton.bgColor}
           ${
             isExpanded
@@ -232,6 +250,11 @@ export default function ItemActionPanel({
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
+          // Expand on click for touchscreen devices
+          // (on desktop, hover already expands, so this is harmless)
+          if (!isProcessing && !isExpanded) {
+            onExpandedChange?.(true);
+          }
         }}
         onMouseDown={(e) => {
           e.stopPropagation();
@@ -368,5 +391,6 @@ export default function ItemActionPanel({
         </div>
       </div>
     </div>
+    </>
   );
 }
